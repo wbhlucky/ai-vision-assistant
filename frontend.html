@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 视觉对话助手</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f0f0f;color:#e0e0e0;height:100vh;display:flex;flex-direction:column}
+header{background:#1a1a2e;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2a4a}
+header h1{font-size:18px;color:#7c9aff}
+.controls{display:flex;gap:10px;align-items:center}
+.controls button{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px}
+.btn-start{background:#4caf50;color:#fff}
+.btn-stop{background:#f44336;color:#fff}
+.btn-mic{background:#2196f3;color:#fff}
+.btn-mic.active{background:#ff9800}
+.status{font-size:12px;padding:4px 10px;border-radius:10px;background:#2a2a4a}
+.status.online{background:#1b5e20;color:#81c784}
+.status.offline{background:#4a1a1a;color:#ef9a9a}
+main{flex:1;display:flex;overflow:hidden}
+.video-panel{flex:1;display:flex;flex-direction:column;align-items:center;padding:15px;background:#1a1a1a;min-width:340px}
+.video-panel video{width:100%;max-width:480px;border-radius:12px;border:2px solid #333;background:#000}
+.video-panel .info{margin-top:10px;font-size:12px;color:#888}
+.chat-panel{flex:2;display:flex;flex-direction:column;background:#141414;border-left:1px solid #2a2a2a;min-width:400px}
+.chat-messages{flex:1;overflow-y:auto;padding:15px;display:flex;flex-direction:column;gap:8px}
+.chat-messages .msg{padding:8px 12px;border-radius:8px;max-width:85%;font-size:13px;line-height:1.5;animation:fadeIn .2s}
+.chat-messages .msg.ai{background:#1a2740;align-self:flex-start;border-left:3px solid #7c9aff}
+.chat-messages .msg.event{background:#1a301a;align-self:flex-start;border-left:3px solid #4caf50;font-size:12px}
+.chat-messages .msg.suggestion{background:#302a1a;align-self:flex-start;border-left:3px solid #ff9800;font-size:12px}
+.chat-messages .msg.transcript{background:#2a1a30;align-self:flex-start;border-left:3px solid #9c27b0;font-size:12px}
+.chat-messages .msg.system{background:#1a1a1a;align-self:center;font-size:11px;color:#666}
+.chat-messages .msg .label{font-size:10px;text-transform:uppercase;color:#888;margin-bottom:2px}
+.chat-messages .msg .time{font-size:10px;color:#555;float:right}
+.dashboard{background:#1a1a2e;padding:8px 15px;display:flex;gap:20px;font-size:11px;border-top:1px solid #2a2a4a;flex-wrap:wrap}
+.dashboard .stat{display:flex;flex-direction:column;align-items:center}
+.dashboard .stat .val{font-size:16px;font-weight:700;color:#7c9aff}
+.dashboard .stat .lbl{color:#888}
+.ocr-section{background:#141414;padding:10px 15px;border-top:1px solid #2a2a2a;display:flex;gap:10px;align-items:center}
+.ocr-section button{padding:6px 12px;border:1px solid #444;border-radius:4px;background:#1a1a2e;color:#ccc;cursor:pointer;font-size:12px}
+.ocr-section button:hover{background:#2a2a4a}
+footer{padding:8px 20px;background:#0a0a0a;font-size:11px;color:#555;text-align:center}
+@keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+input{border:1px solid #444;border-radius:4px;padding:6px 10px;background:#1a1a1a;color:#ccc;font-size:12px;width:200px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 AI 视觉对话助手</h1>
+  <div class="controls">
+    <input type="text" id="ws-url" value="ws://localhost:8000/v1/vision/dialogue?api_key=my-secret-key" placeholder="WebSocket URL" size="60">
+    <span id="status-dot" class="status offline">● 未连接</span>
+    <button class="btn-start" onclick="connect()">连接</button>
+    <button class="btn-stop" onclick="disconnect()">断开</button>
+    <button class="btn-mic" id="btn-mic" onclick="toggleMic()">🎤 麦克风</button>
+  </div>
+</header>
+
+<main>
+  <div class="video-panel">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none"></canvas>
+    <div class="info" id="video-info">📷 摄像头未启动</div>
+  </div>
+
+  <div class="chat-panel">
+    <div class="chat-messages" id="messages">
+      <div class="msg system"><span>连接到 WebSocket 开始体验</span></div>
+    </div>
+    <div class="ocr-section">
+      <button onclick="doOCR('extract')">📄 OCR 提取</button>
+      <button onclick="doOCR('summarize')">📝 OCR 总结</button>
+      <button onclick="doOCR('translate')">🌐 OCR 翻译</button>
+    </div>
+    <div class="dashboard" id="dashboard">
+      <div class="stat"><span class="val" id="d-vision">0</span><span class="lbl">视觉调用</span></div>
+      <div class="stat"><span class="val" id="d-speech">0</span><span class="lbl">语音调用</span></div>
+      <div class="stat"><span class="val" id="d-snaps">0</span><span class="lbl">场景快照</span></div>
+      <div class="stat"><span class="val" id="d-events">0</span><span class="lbl">场景事件</span></div>
+      <div class="stat"><span class="val" id="d-cost">¥0</span><span class="lbl">预估费用</span></div>
+      <div class="stat"><span class="val" id="d-skipped">0</span><span class="lbl">跳帧</span></div>
+    </div>
+  </div>
+</main>
+
+<footer>帧率: 2s/帧 | VAD: 开启 | 模型: qwen-vl-plus | <span id="footer-latency">延迟: --</span></footer>
+
+<script>
+// ── 状态变量 ────────────────────────────────────────
+let ws = null;
+let stream = null;
+let micStream = null;
+let audioCtx = null;
+let frameTimer = null;
+let micEnabled = false;
+let lastFrameTime = 0;
+const FRAME_INTERVAL = 2000; // 2s between frames
+
+// ── DOM 引用 ─────────────────────────────────────────
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx2d = canvas.getContext('2d');
+const messages = document.getElementById('messages');
+const statusDot = document.getElementById('status-dot');
+const btnMic = document.getElementById('btn-mic');
+
+// ── 消息显示 ─────────────────────────────────────────
+function addMsg(type, content, meta) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  const now = new Date().toLocaleTimeString();
+  const labelMap = {
+    ai: '🤖 AI', event: '📸 场景事件', suggestion: '💡 主动建议',
+    transcript: '🎤 转录', system: '⚙ 系统'
+  };
+  const label = labelMap[type] || type;
+  div.innerHTML = `<span class="label">${label}</span><span class="time">${now}</span><br>${escapeHtml(content)}`;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── WebSocket ────────────────────────────────────────
+function connect() {
+  if (ws) ws.close();
+  const url = document.getElementById('ws-url').value;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    statusDot.textContent = '● 已连接';
+    statusDot.className = 'status online';
+    addMsg('system', '已连接到 ' + url);
+    startCamera();
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleMessage(msg);
+  };
+
+  ws.onclose = () => {
+    statusDot.textContent = '● 已断开';
+    statusDot.className = 'status offline';
+    addMsg('system', 'WebSocket 已断开');
+    stopAll();
+  };
+
+  ws.onerror = () => {
+    addMsg('system', '⚠ WebSocket 连接失败，请确认服务已启动');
+  };
+}
+
+function disconnect() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'end'}));
+    setTimeout(() => { if(ws) ws.close(); }, 500);
+  }
+  stopAll();
+}
+
+// ── 消息路由 ─────────────────────────────────────────
+function handleMessage(msg) {
+  const t = msg.type, c = msg.content || '', m = msg.metadata || {};
+
+  switch(t) {
+    case 'vision_description':
+      addMsg('ai', c);
+      document.getElementById('footer-latency').textContent =
+        '延迟: ' + (m.latency_ms || '?') + 'ms | 模型: ' + (m.model || '?');
+      break;
+    case 'scene_event':
+      addMsg('event', c + (m.added ? ' (新增:' + m.added.join(',') + ')' : '') + (m.removed ? ' (移除:' + m.removed.join(',') + ')' : ''));
+      break;
+    case 'proactive_suggestion':
+    case 'predictive_suggestion':
+      addMsg('suggestion', c);
+      break;
+    case 'transcript':
+      addMsg('transcript', c + (m.confidence ? ' (' + Math.round(m.confidence*100) + '%)' : ''));
+      break;
+    case 'agent_answer':
+      addMsg('ai', c);
+      break;
+    case 'ocr_text':
+      addMsg('ai', '📄 OCR: ' + c);
+      if (m.summary) addMsg('ai', '📝 总结: ' + m.summary);
+      if (m.translated) addMsg('ai', '🌐 翻译: ' + m.translated);
+      break;
+    case 'error':
+      addMsg('system', '⚠ 错误: ' + c);
+      break;
+    case 'dashboard':
+      try {
+        const d = typeof c === 'string' ? JSON.parse(c) : c;
+        updateDashboard(d);
+      } catch(e) {}
+      break;
+    case 'cost_summary':
+      try {
+        const s = typeof c === 'string' ? JSON.parse(c) : c;
+        updateDashboard(s);
+      } catch(e) {}
+      break;
+    case 'pong':
+      break; // silent
+  }
+}
+
+// ── 仪表板 ───────────────────────────────────────────
+function updateDashboard(d) {
+  if (d.vision_calls !== undefined) document.getElementById('d-vision').textContent = d.vision_calls;
+  if (d.stt_calls !== undefined) document.getElementById('d-speech').textContent = d.stt_calls;
+  if (d.scene_snapshots !== undefined) document.getElementById('d-snaps').textContent = d.scene_snapshots;
+  if (d.scene_events !== undefined) document.getElementById('d-events').textContent = d.scene_events;
+  if (d.total_cost_rmb !== undefined) {
+    document.getElementById('d-cost').textContent = '¥' + d.total_cost_rmb.toFixed(3);
+  } else if (d.vision_calls !== undefined) {
+    const cost = d.vision_calls * 0.008 + (d.stt_calls||0) * 0.002;
+    document.getElementById('d-cost').textContent = '¥' + cost.toFixed(3);
+  }
+  if (d.frames_skipped_estimated !== undefined) document.getElementById('d-skipped').textContent = d.frames_skipped_estimated;
+}
+
+// ── 摄像头 ───────────────────────────────────────────
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, frameRate: { ideal: 10 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    document.getElementById('video-info').textContent = '📷 摄像头已启动 (640x480)';
+    startFrameCapture();
+  } catch(e) {
+    addMsg('system', '⚠ 无法访问摄像头: ' + e.message);
+    document.getElementById('video-info').textContent = '⚠ 摄像头不可用';
+  }
+}
+
+function startFrameCapture() {
+  frameTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastFrameTime < FRAME_INTERVAL) return;
+    lastFrameTime = Date.now();
+
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    ctx2d.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const jpeg = canvas.toDataURL('image/jpeg', 0.6);
+    const b64 = jpeg.split(',')[1]; // remove data:image/jpeg;base64, prefix
+
+    ws.send(JSON.stringify({type: 'frame', data: b64}));
+  }, FRAME_INTERVAL);
+}
+
+// ── 麦克风 ───────────────────────────────────────────
+async function toggleMic() {
+  if (micEnabled) {
+    stopMic();
+    return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const source = audioCtx.createMediaStreamSource(micStream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    processor.onaudioprocess = (e) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !micEnabled) return;
+      const input = e.inputBuffer.getChannelData(0);
+      // 检查 RMS 能量（简单 VAD）
+      let rms = 0;
+      for (let i = 0; i < input.length; i++) rms += input[i] * input[i];
+      rms = Math.sqrt(rms / input.length);
+      if (rms < 0.005) return; // 静音跳过
+
+      // 转 PCM16
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        pcm[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
+      }
+      const b64 = arrayBufferToBase64(pcm.buffer);
+
+      ws.send(JSON.stringify({
+        type: 'audio',
+        data: b64,
+        metadata: { sample_rate: 16000 }
+      }));
+    };
+
+    micEnabled = true;
+    btnMic.textContent = '🎤 录音中';
+    btnMic.classList.add('active');
+    addMsg('system', '🎤 麦克风已开启 (16kHz, VAD过滤)');
+  } catch(e) {
+    addMsg('system', '⚠ 无法访问麦克风: ' + e.message);
+  }
+}
+
+function stopMic() {
+  micEnabled = false;
+  btnMic.textContent = '🎤 麦克风';
+  btnMic.classList.remove('active');
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+}
+
+// ── OCR ──────────────────────────────────────────────
+function doOCR(mode) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return alert('请先连接');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  ctx2d.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const jpeg = canvas.toDataURL('image/jpeg', 0.7);
+  const b64 = jpeg.split(',')[1];
+  ws.send(JSON.stringify({type: 'ocr', data: b64, metadata: {mode: mode}}));
+  addMsg('system', '📄 发送 OCR 请求 (' + mode + ')...');
+}
+
+// ── 工具函数 ─────────────────────────────────────────
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function stopAll() {
+  stopMic();
+  if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+  document.getElementById('video-info').textContent = '📷 摄像头未启动';
+}
+
+// ── 页面卸载清理 ─────────────────────────────────────
+window.addEventListener('beforeunload', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'end'}));
+  }
+  stopAll();
+});
+</script>
+</body>
+</html>

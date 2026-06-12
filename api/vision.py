@@ -249,10 +249,17 @@ async def _ws_send(websocket: WebSocket, msg_type: str, content: str, metadata: 
 
 
 def _ws_auth(websocket: WebSocket) -> None:
-    """WebSocket 握手阶段的 API Key 校验。"""
+    """WebSocket 握手阶段的 API Key 校验。
+
+    浏览器 WebSocket 不支持自定义头，因此同时支持:
+    1. Header: X-API-Key
+    2. Query: ?api_key=xxx
+    """
     if not settings.api_key:
         return
-    key = websocket.headers.get("x-api-key") or websocket.headers.get("X-API-Key")
+    key = (websocket.headers.get("x-api-key")
+           or websocket.headers.get("X-API-Key")
+           or websocket.query_params.get("api_key"))
     if key != settings.api_key:
         raise unauthorized(code="UNAUTHORIZED", message="Invalid or missing X-API-Key")
 
