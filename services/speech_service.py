@@ -111,29 +111,28 @@ def transcribe(audio_base64: str, sample_rate: int = 16000) -> dict:
             "latency_ms": round(elapsed, 2),
         }
 
-    # 调用 DashScope Paraformer
+    # 调用 DashScope Paraformer（通过 REST API，避免 SDK callback 兼容问题）
     try:
-        from dashscope.audio.asr import Recognition  # type: ignore[import-untyped]
+        import urllib.request
+        import json as _json
 
-        recognition = Recognition(
-            model=settings.speech_model,
-            format="pcm",
-            sample_rate=sample_rate,
-        )
-        result = recognition.call(raw_pcm)
+        url = "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription"
+        headers = {
+            "Authorization": f"Bearer {settings.dashscope_api_key}",
+            "Content-Type": "application/octet-stream",
+            "X-DashScope-Model": settings.speech_model,
+            "X-DashScope-SampleRate": str(sample_rate),
+            "X-DashScope-Format": "pcm",
+        }
+        req = urllib.request.Request(url, data=raw_pcm, headers=headers, method="POST")
+        resp = urllib.request.urlopen(req, timeout=settings.external_request_timeout_sec)
+        body = _json.loads(resp.read())
 
         text = ""
         confidence = 0.0
-        if result and result.status_code == 200:
-            # Recognition 结果格式: output.sentence.text
-            output = getattr(result, "output", None)
-            if output and hasattr(output, "sentence"):
-                text = output.sentence.text or ""
-                confidence = getattr(output.sentence, "confidence", 0.0) or 0.0
-            elif isinstance(output, dict):
-                sentence = output.get("sentence", {})
-                text = sentence.get("text", "")
-                confidence = sentence.get("confidence", 0.0)
+        if body.get("output") and body["output"].get("sentence"):
+            text = body["output"]["sentence"].get("text", "")
+            confidence = body["output"]["sentence"].get("confidence", 0.0)
 
         if not text:
             text = "[silence or unrecognized]"
