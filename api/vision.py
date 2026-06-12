@@ -324,6 +324,25 @@ async def vision_dialogue(websocket: WebSocket):
             if msg.type == "ping":
                 await _ws_send(websocket, "pong", "alive")
 
+            # ── text (文字提问) ───────────────────────────────
+            elif msg.type == "text":
+                text = msg.data.strip()
+                if text:
+                    session.add_transcript(text)
+                    session.multimodal_memory.record_speech(text)
+                    prompt = session.build_prompt(text)
+
+                    # 事件摘要
+                    event_desc = generate_event_description(session.scene_memory)
+                    if event_desc:
+                        prompt += f"\n\n【补充事件信息】\n{event_desc}"
+
+                    try:
+                        agent_answer = answer(prompt)
+                        await _ws_send(websocket, "agent_answer", agent_answer)
+                    except Exception as exc:
+                        await _ws_send(websocket, "error", f"Agent error: {exc}")
+
             # ── end ───────────────────────────────────────────
             elif msg.type == "end":
                 summary = json.dumps(budget.summary(), ensure_ascii=False)

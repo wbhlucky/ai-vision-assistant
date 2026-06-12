@@ -70,9 +70,11 @@ input{border:1px solid #444;border-radius:4px;padding:6px 10px;background:#1a1a1
       <div class="msg system"><span>连接到 WebSocket 开始体验</span></div>
     </div>
     <div class="ocr-section">
-      <button onclick="doOCR('extract')">📄 OCR 提取</button>
-      <button onclick="doOCR('summarize')">📝 OCR 总结</button>
-      <button onclick="doOCR('translate')">🌐 OCR 翻译</button>
+      <input type="text" id="text-input" placeholder="打字问 AI..." style="flex:1;max-width:300px" onkeydown="if(event.key==='Enter')sendText()">
+      <button onclick="sendText()">💬 发送</button>
+      <button onclick="doOCR('extract')">📄 OCR</button>
+      <button onclick="doOCR('summarize')">📝 总结</button>
+      <button onclick="doOCR('translate')">🌐 翻译</button>
     </div>
     <div class="dashboard" id="dashboard">
       <div class="stat"><span class="val" id="d-vision">0</span><span class="lbl">视觉调用</span></div>
@@ -319,15 +321,15 @@ async function toggleMic() {
     processor.connect(audioCtx.destination);
 
     let chunkCount = 0;
-    let lastLogChunk = 0;
-    let sentCount = 0;
+    let audioBuffer = [];  // 累积音频数据的 Int16Array 数组
+    let lastSendTime = Date.now();
 
     processor.onaudioprocess = (e) => {
       chunkCount++;
 
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         if (chunkCount === 1 || chunkCount % 100 === 0) {
-          addMsg('system', '⚠ onaudioprocess #' + chunkCount + ': WebSocket 未连接 (readyState=' + (ws ? ws.readyState : 'null') + ')');
+          addMsg('system', '⚠ onaudioprocess #' + chunkCount + ': WebSocket 未连接');
         }
         return;
       }
@@ -335,29 +337,48 @@ async function toggleMic() {
 
       const input = e.inputBuffer.getChannelData(0);
 
-      // 计算音量
-      let rms = 0;
-      for (let i = 0; i < input.length; i++) rms += input[i] * input[i];
-      rms = Math.sqrt(rms / input.length);
-
-      // 首次回调时打印调试信息
-      if (chunkCount <= 3) {
-        addMsg('system', '🔊 onaudioprocess #' + chunkCount + ': bufferSize=' + input.length + ' RMS=' + rms.toFixed(6) + ' ws=' + ws.readyState);
-      }
-
-      // 转 PCM16 并发送（不管音量大小都发）
+      // 转 PCM16 并累积
       const pcm = new Int16Array(input.length);
       for (let i = 0; i < input.length; i++) {
         pcm[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
       }
+      audioBuffer.push(pcm);
 
-      const b64 = arrayBufferToBase64(pcm.buffer);
-      ws.send(JSON.stringify({ type: 'audio', data: b64, metadata: { sample_rate: 16000, rms: rms.toFixed(4) } }));
-      sentCount++;
+      // 计算当前 RMS
+      let rms = 0;
+      for (let i = 0; i < input.length; i++) rms += input[i] * input[i];
+      rms = Math.sqrt(rms / input.length);
 
-      // 每 50 个 chunk 更新一次
-      if (chunkCount % 50 === 0) {
-        addMsg('system', '🎤 chunk #' + chunkCount + ' | RMS=' + (rms*100).toFixed(1) + '% | 已发送=' + sentCount);
+      // 每 2 秒或累积 8 个 chunk（~2秒）发送一次合并音频
+      const now = Date.now();
+      if (audioBuffer.length >= 8 || (now - lastSendTime > 2000 && audioBuffer.length > 0)) {
+        // 合并所有累积的 PCM 数据
+        let totalLen = 0;
+        for (const buf of audioBuffer) totalLen += buf.length;
+        const combined = new Int16Array(totalLen);
+        let offset = 0;
+        for (const buf of audioBuffer) {
+          combined.set(buf, offset);
+          offset += buf.length;
+        }
+
+        const b64 = arrayBufferToBase64(combined.buffer);
+        ws.send(JSON.stringify({
+          type: 'audio',
+          data: b64,
+          metadata: { sample_rate: 16000, chunks: audioBuffer.length, duration_ms: Math.round(totalLen / 16) }
+        }));
+
+        if (chunkCount <= 50 || chunkCount % 20 === 0) {
+          addMsg('system', '🎤 发送音频: ' + audioBuffer.length + ' chunks合并 | ' + Math.round(totalLen/16) + 'ms | RMS=' + (rms*100).toFixed(1) + '%');
+        }
+
+        audioBuffer = [];
+        lastSendTime = now;
+      }
+
+      if (chunkCount === 1) {
+        addMsg('system', '🔊 录音开始 (2秒缓冲模式) RMS=' + rms.toFixed(6));
       }
     };
 
@@ -376,6 +397,16 @@ function stopMic() {
   btnMic.classList.remove('active');
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
+}
+
+// ── 文字提问 ──────────────────────────────────────────
+function sendText() {
+  const input = document.getElementById('text-input');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type: 'text', data: text}));
+  addMsg('system', '💬 你: ' + text);
+  input.value = '';
 }
 
 // ── OCR ──────────────────────────────────────────────

@@ -57,46 +57,25 @@ class DialogueSession:
         """
         parts: list[str] = []
 
-        # 1) 视觉上下文
+        # 1) 视觉上下文（仅最新一帧摘要）
         if self.frame_descriptions:
-            recent_frames = self.frame_descriptions[-3:]
-            parts.append(
-                "【当前视觉场景】\n" + "\n".join(f"- {d}" for d in recent_frames)
-            )
+            latest = self.frame_descriptions[-1]
+            parts.append(f"【视觉】{latest[:200]}")
 
-        # 2) 场景记忆（★ 新增：物体变化 + 事件日志）
-        memory_ctx = self.scene_memory.build_memory_context()
-        if memory_ctx and memory_ctx != "（暂无场景记忆）":
-            parts.append(memory_ctx)
-
-        # 3) 场景记忆查询：如果用户问题涉及变化/历史，附加记忆检索结果
+        # 2) 场景记忆检索（直接回答问题）
         if latest_transcript:
             memory_answer = self.scene_memory.query(latest_transcript)
             if memory_answer and "暂无" not in memory_answer:
-                parts.append(f"【场景记忆检索】\n{memory_answer}")
+                parts.append(f"【记忆】{memory_answer}")
 
-        # ★ 4) 多模态跨模态检索：统一搜索视觉+OCR+语音历史
+        # 3) 当前用户输入
         if latest_transcript:
-            cross_modal_answer = self.multimodal_memory.query_answer(latest_transcript)
-            if cross_modal_answer and "没有找到" not in cross_modal_answer:
-                parts.append(f"【跨模态记忆检索】\n{cross_modal_answer}")
+            parts.append(f"用户: {latest_transcript}")
 
-        # 5) 对话历史
-        if self.transcripts:
-            recent_text = self.transcripts[-5:]
-            parts.append(
-                "【对话历史】\n" + "\n".join(f"- {t}" for t in recent_text)
-            )
-
-        # 6) 当前用户输入
-        if latest_transcript:
-            parts.append(f"用户刚刚说：{latest_transcript}")
-
-        # 7) 指令（含跨模态引导）
+        # 7) 指令（精炼模式）
         parts.append(
-            "请根据以上视觉场景、场景记忆、跨模态检索结果和对话内容，"
-            "用中文给出自然、有帮助的回复。"
-            "如果跨模态记忆中有相关信息，请优先引用。"
+            "请用一句话直接回答用户问题。如果场景记忆中有相关信息，直接引用事实。"
+            "不要重复场景描述，不要输出长篇分析。"
         )
 
         return "\n\n".join(parts)
