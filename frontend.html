@@ -261,46 +261,51 @@ function startFrameCapture() {
 
 // ── 麦克风 ───────────────────────────────────────────
 async function toggleMic() {
-  if (micEnabled) {
-    stopMic();
-    return;
-  }
+  if (micEnabled) { stopMic(); return; }
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+
+    // 确保 AudioContext 在用户手势后恢复（某些浏览器需要）
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
     const source = audioCtx.createMediaStreamSource(micStream);
     const processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
     source.connect(processor);
     processor.connect(audioCtx.destination);
 
+    let chunkCount = 0;
     processor.onaudioprocess = (e) => {
       if (!ws || ws.readyState !== WebSocket.OPEN || !micEnabled) return;
       const input = e.inputBuffer.getChannelData(0);
-      // 检查 RMS 能量（简单 VAD）
-      let rms = 0;
-      for (let i = 0; i < input.length; i++) rms += input[i] * input[i];
-      rms = Math.sqrt(rms / input.length);
-      if (rms < 0.005) return; // 静音跳过
 
-      // 转 PCM16
+      // 转 PCM16（不做前端 VAD，全部发给后端处理）
       const pcm = new Int16Array(input.length);
       for (let i = 0; i < input.length; i++) {
         pcm[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
       }
-      const b64 = arrayBufferToBase64(pcm.buffer);
 
-      ws.send(JSON.stringify({
-        type: 'audio',
-        data: b64,
-        metadata: { sample_rate: 16000 }
-      }));
+      // 计算音量用于显示
+      let rms = 0;
+      for (let i = 0; i < input.length; i++) rms += input[i] * input[i];
+      rms = Math.sqrt(rms / input.length);
+
+      const b64 = arrayBufferToBase64(pcm.buffer);
+      ws.send(JSON.stringify({ type: 'audio', data: b64, metadata: { sample_rate: 16000, rms: rms.toFixed(4) } }));
+
+      // 每 50 个 chunk 更新一次音量指示器
+      chunkCount++;
+      if (chunkCount % 50 === 0) {
+        document.getElementById('footer-latency').textContent =
+          '🎤 音量: ' + (rms * 100).toFixed(1) + '% | 已发送 ' + chunkCount + ' chunks';
+      }
     };
 
     micEnabled = true;
     btnMic.textContent = '🎤 录音中';
     btnMic.classList.add('active');
-    addMsg('system', '🎤 麦克风已开启 (16kHz, VAD过滤)');
+    addMsg('system', '🎤 麦克风已开启 (16kHz, 所有音频发送后端VAD处理, 共发送' + chunkCount + ' chunks)');
   } catch(e) {
     addMsg('system', '⚠ 无法访问麦克风: ' + e.message);
   }

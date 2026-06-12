@@ -481,7 +481,15 @@ async def vision_dialogue(websocket: WebSocket):
 
                 stt_result = transcribe(msg.data, sample_rate)
                 transcript_text = stt_result.get("text", "")
-                if transcript_text:
+
+                # 始终告知前端结果（含错误和空结果）
+                await _ws_send(
+                    websocket, "transcript",
+                    transcript_text or "(未识别到语音)",
+                    metadata={"confidence": stt_result.get("confidence", 0.0)},
+                )
+
+                if transcript_text and not transcript_text.startswith("[STT"):
                     session.add_transcript(transcript_text)
                     speech_chunks_processed.inc()
                     await _ws_send(
