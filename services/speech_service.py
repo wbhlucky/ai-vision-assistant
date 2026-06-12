@@ -111,28 +111,51 @@ def transcribe(audio_base64: str, sample_rate: int = 16000) -> dict:
             "latency_ms": round(elapsed, 2),
         }
 
-    # 调用 DashScope Paraformer（通过 REST API，避免 SDK callback 兼容问题）
+    # 调用 DashScope Paraformer（SDK 需要文件路径，写入临时文件）
+    import tempfile
+    tmp_path = None
     try:
-        import urllib.request
-        import json as _json
+        from dashscope.audio.asr import Recognition, RecognitionCallback
 
-        url = "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription"
-        headers = {
-            "Authorization": f"Bearer {settings.dashscope_api_key}",
-            "Content-Type": "application/octet-stream",
-            "X-DashScope-Model": settings.speech_model,
-            "X-DashScope-SampleRate": str(sample_rate),
-            "X-DashScope-Format": "pcm",
-        }
-        req = urllib.request.Request(url, data=raw_pcm, headers=headers, method="POST")
-        resp = urllib.request.urlopen(req, timeout=settings.external_request_timeout_sec)
-        body = _json.loads(resp.read())
+        # 写临时 PCM 文件
+        with tempfile.NamedTemporaryFile(suffix=".pcm", delete=False) as tmp:
+            tmp.write(raw_pcm)
+            tmp_path = tmp.name
+
+        result_container = {}
+
+        class _Callback(RecognitionCallback):
+            def on_event(self, recognition_result):
+                result_container["result"] = recognition_result
+            def on_error(self, error):
+                result_container["error"] = error
+            def on_complete(self):
+                pass
+            def on_close(self):
+                pass
+            def on_open(self):
+                pass
+
+        recognition = Recognition(
+            model=settings.speech_model,
+            format="pcm",
+            sample_rate=sample_rate,
+            callback=_Callback(),
+        )
+        recognition.call(tmp_path)
 
         text = ""
         confidence = 0.0
-        if body.get("output") and body["output"].get("sentence"):
-            text = body["output"]["sentence"].get("text", "")
-            confidence = body["output"]["sentence"].get("confidence", 0.0)
+        if "result" in result_container:
+            r = result_container["result"]
+            output = getattr(r, "output", None)
+            if output and hasattr(output, "sentence"):
+                text = output.sentence.text or ""
+                confidence = getattr(output.sentence, "confidence", 0.0) or 0.0
+            elif isinstance(output, dict):
+                sentence = output.get("sentence", {})
+                text = sentence.get("text", "")
+                confidence = sentence.get("confidence", 0.0)
 
         if not text:
             text = "[silence or unrecognized]"
@@ -153,3 +176,10 @@ def transcribe(audio_base64: str, sample_rate: int = 16000) -> dict:
             "confidence": 0.0,
             "latency_ms": round(elapsed, 2),
         }
+    finally:
+        if tmp_path:
+            import os
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
