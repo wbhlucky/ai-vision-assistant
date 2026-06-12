@@ -4,7 +4,7 @@
 
 > FastAPI 后端 | LangGraph Agent | 多模态记忆 | MCP 工具调用 | RAG 增强
 
-📺 **Demo 视频**: [Bilibili 链接] ← 替换为你的视频链接
+📺 **Demo 视频**: [Bilibili](https://www.bilibili.com/video/BV17nJ569EDk/)
 
 ---
 
