@@ -145,6 +145,31 @@ backend-refactor/
 - [TECHNICAL_REPORT.md](./TECHNICAL_REPORT.md) — 四大核心卖点详细说明
 - [DESIGN.md](./DESIGN.md) — 设计文档 (用户故事 + 成本控制策略)
 
+## 原创功能说明
+
+本项目基于 FastAPI + LangGraph 框架搭建，以下模块为原创开发：
+
+| 模块 | 文件 | 原创功能 |
+|------|------|---------|
+| 视觉记忆 | `services/scene_memory.py` | 物体提取算法、帧间 diff、事件日志、NL 查询 |
+| 主动观察 | `services/proactive_agent.py` | 5 条可配置触发规则 + 冷却机制 |
+| OCR 管道 | `services/ocr_service.py` | 纯视觉 OCR → 总结/翻译管道 |
+| 跨模态记忆 | `services/multimodal_memory.py` | 统一记忆存储、跨模态检索、时间窗口查询 |
+| 成本控制 | `services/cost_controller.py` | 帧率门控、API 预算、自适应分辨率 |
+| 前端 Demo | `frontend.html` | 摄像头+麦克风采集、WebSocket 双向通信、仪表板 |
+
+**第三方依赖**: FastAPI, LangGraph (agentic_rag), DashScope SDK, Pillow, slowapi, prometheus_client, websockets, pytest — 均在 README 中列明。
+
 ## 依赖
 
-Python 3.11+ | FastAPI | LangGraph | DashScope | Pillow | slowapi | Prometheus | pytest
+- Python 3.11+
+- FastAPI, Pydantic, uvicorn — Web 框架
+- dashscope — 阿里云百炼多模态 SDK（视觉 + 语音 API）
+- openai — DeepSeek / OpenAI 兼容接口（可选）
+- Pillow — 图像压缩与降级描述
+- slowapi — 限流
+- prometheus_client — 指标采集
+- websockets — WebSocket 客户端（demo 脚本用）
+- pytest — 单元测试
+
+安装：`pip install fastapi uvicorn pydantic python-dotenv dashscope openai Pillow slowapi prometheus-client websockets pytest`
