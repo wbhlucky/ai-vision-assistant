@@ -53,7 +53,8 @@ input{border:1px solid #444;border-radius:4px;padding:6px 10px;background:#1a1a1
     <span id="status-dot" class="status offline">● 未连接</span>
     <button class="btn-start" onclick="connect()">连接</button>
     <button class="btn-stop" onclick="disconnect()">断开</button>
-    <button class="btn-mic" id="btn-mic" onclick="toggleMic()">🎤 麦克风</button>
+    <select id="audio-device" style="padding:6px 8px;border:1px solid #444;border-radius:4px;background:#1a1a1a;color:#ccc;font-size:12px;max-width:160px"><option>扫描设备中...</option></select>
+<button class="btn-mic" id="btn-mic" onclick="toggleMic()">🎤 麦克风</button>
   </div>
 </header>
 
@@ -259,11 +260,45 @@ function startFrameCapture() {
   }, FRAME_INTERVAL);
 }
 
+// ── 音频设备枚举 ──────────────────────────────────────
+async function enumerateAudioDevices() {
+  try {
+    // 先请求权限以获取设备标签
+    const test = await navigator.mediaDevices.getUserMedia({ audio: true });
+    test.getTracks().forEach(t => t.stop());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(d => d.kind === 'audioinput');
+    const sel = document.getElementById('audio-device');
+    sel.innerHTML = '';
+    audioInputs.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || '麦克风 ' + (d.deviceId || '').slice(0, 8);
+      sel.appendChild(opt);
+    });
+    if (audioInputs.length === 0) {
+      sel.innerHTML = '<option>未检测到麦克风</option>';
+    }
+  } catch(e) {
+    document.getElementById('audio-device').innerHTML = '<option>无法获取设备列表</option>';
+  }
+}
+// 页面加载时扫描
+enumerateAudioDevices();
+
 // ── 麦克风 ───────────────────────────────────────────
 async function toggleMic() {
   if (micEnabled) { stopMic(); return; }
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
+    const sel = document.getElementById('audio-device');
+    const deviceId = sel.value;
+    const constraints = {
+      audio: { sampleRate: 16000, channelCount: 1 }
+    };
+    if (deviceId && deviceId.length > 10) {
+      constraints.audio.deviceId = { exact: deviceId };
+    }
+    micStream = await navigator.mediaDevices.getUserMedia(constraints);
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
 
     // 确保 AudioContext 在用户手势后恢复（某些浏览器需要）
